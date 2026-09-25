@@ -67,7 +67,28 @@ jobs:
             exit 1
           fi
 
+          # BetterCMS package-manager setup — sourced before every dependency install.
+          # Embedded into the generated GitHub workflows (helpers.ts) and sourced by build.sh.
+          # pnpm takes its major from pnpm-lock.yaml, as Vercel does: Corepack otherwise fetches
+          # the newest pnpm, which refuses a lockfile an older major wrote (ERR_PNPM_BROKEN_LOCKFILE).
+          # A packageManager field in package.json names the exact version, and Corepack honors it.
           corepack enable || true
+          if [ -f pnpm-lock.yaml ] && ! grep -q '"packageManager"' package.json 2>/dev/null; then
+            BCMS_PNPM_LOCKFILE="$(grep -m1 '^lockfileVersion' pnpm-lock.yaml | tr -dc '0-9.' || true)"
+            case "$BCMS_PNPM_LOCKFILE" in
+              5.[0-3]*) BCMS_PNPM=6 ;;
+              5.4*) BCMS_PNPM=7 ;;
+              6.*) BCMS_PNPM=8 ;;
+              9.*) BCMS_PNPM=9 ;;
+              *) BCMS_PNPM="" ;;
+            esac
+            if [ -n "$BCMS_PNPM" ]; then
+              echo "pnpm-lock.yaml is lockfileVersion $BCMS_PNPM_LOCKFILE: using pnpm $BCMS_PNPM"
+              # Never fatal: a pin that cannot be fetched leaves the default pnpm, as before this file.
+              corepack install -g "pnpm@$BCMS_PNPM" || npm install -g --force "pnpm@$BCMS_PNPM" \
+                || echo "::warning::could not install pnpm $BCMS_PNPM; continuing with the default pnpm"
+            fi
+          fi
           if [ -n "$PKG_MANAGER" ]; then PM="$PKG_MANAGER"
           elif [ -f bun.lock ] || [ -f bun.lockb ]; then PM="bun"
           elif [ -f pnpm-lock.yaml ]; then PM="pnpm"
@@ -82,7 +103,7 @@ jobs:
           else
             case "$PM" in
               bun) bun install ;;
-              pnpm) pnpm install ;;
+              pnpm) pnpm install || pnpm install --no-frozen-lockfile ;;
               yarn) yarn install ;;
               npm) npm ci || npm install ;;
               npm-nolock) npm install ;;
